@@ -1,4 +1,7 @@
 defmodule Paxos do
+
+    # Takes an atom (name) and a full list of other atoms (participants) and creates a 
+    # Paxos process with the atom name and all the atoms (participants) that are participating in the protocol   
     def start(name, participants) do
         pid = spawn(Paxos, :init, [name, participants])
         case :global.re_register_name(name, pid) do
@@ -9,6 +12,7 @@ defmodule Paxos do
         pid
     end
 
+    # The Initialisation function for start; assigns ballots, values, acks and whether a state has decided on a value
     defp init() do
         state = %{
             name: name,
@@ -24,49 +28,78 @@ defmodule Paxos do
         run(state)
     end
 
+    # Run function for a certain state
     defp run(state) do
         state = receive do
+            # Prepare - finds out if a process is ready 
             {:prepare, b, p} ->
+            
+                # If the ballot value proposed is bigger than the current states ballot
+                # acknowledge that ballot number and change the states ballot number to the new ballot number
                 if b > state.bal do
                     state = %{state | bal: b}
                     send(p, {:prepared, b, state.a_bal, state.a_val})
+                    
+                # If the new ballot number is not bigger than the current states ballot, return a non-acknowledgment
                 else
                     send(p, {:nack, b})
                 end
                 state
-
+            
+            # Prepared - checks to see if a qourum of processes have acknowledged the ballot value
             {:prepared, b, a_bal, a_val} ->
+                # Check the current states prepared acknowledgments
                 state = %{state | prepared_acks: state.prepared_acks
                  ++ [%{:b => b, :a_bal => a_bal, :a_val => a_val}]}
+                 
+                # If there is a qourum (greater than half) of acknoeldgments do the following
                 if length(state.prepared_acks) > round(length(state.participants)/2) do
+                    # Set the decided value from the state
                     decided_value = decide_value(state)
+                    
+                    # Send out an accept to all state participants with the decided value and ballot number
                     for p <- state.participants do
                         send(p, {:accept, b, decided_value})
                     end
                 else
+                    # CHANGE THIS
                     state = receive do
                         {:nack, b} ->
                             {:abort}
                     end
                 end
                 state
-
+            
+            # Accept - accept the value proposed
             {:accept, b, v, p} ->
+                # If the ballot sent is greater than or equal to the current states ballot do the following
                 if b >= state.bal do
+                    # Change the current states ballot value, highest accept ballot value, and the accepted value
                     state = %{state | bal: b, a_bal: b, a_val: v}
+                    
+                    # Respond with an accepted with ballot value
                     send(p, {:accepted, b})
                 else
+                    # Else, just reply with a non-acknowledgement
                     send(p, {:nack, b})
                 end
-
+            
+            # Accepted - checks to see if a qourum of processes have accepted
             {:accepted, b} ->
+                # Check the current states accepted acknowledgments
                 state = %{state | accepted_acks: state.accepted_acks ++ [b]}
+                
+                # Check if there is a qourum (greater than half) of accepted acknowledgments and do the following
                 if length(state.accepted_acks) > round(length(state.participants)/2) do
+                    # Send a decision with the accepted value from the state to all participants
                     for p <- state.participants do
                         send(p, {:decision, state.a_val})
                     end
+                    
+                    # Set decided as true for the state
                     state = %{state | decided: true}
                 else
+                    # CHANGE THIS
                     state = receive do
                         {:nack, b} ->
                             {:abort}
