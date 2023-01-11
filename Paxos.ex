@@ -12,63 +12,62 @@ defmodule Paxos do
     end
 
     # The Initialisation function for start; assigns ballots, values, acks and whether a state has decided on a value
-    defp init() do
-        state = %{
+    def init(name, participants) do
+        initialise = %{
             name: name,
             participants: participants,
-            bal: 0,
-            a_bal: 0,
-            a_val: 0,
-            v: 0,
-            prepared_acks: [],
-            accepted_acks: [],
-            decided: false,
-            leader: 0,
-            myBallot: 0
+            instances: %[],
+        }
+    end
+
+    def create_inst(name, participants, instance) do
+        state = %{
+            name: {name, instance},
+            participants: participants,
+            bal: 0,                         # ballot number - records highest ballot number which process participates in
+            a_bal: 0,                       # highest ballot accepted by this process
+            a_val: 0,                       # value assocated with a_bal
+            v: 0,                           # value of the propose request
+            prepAcks: [],
+            accpAcks: [],
         }
         run(state)
     end
 
     # Run function for a certain state
-    defp run(state) do
+    def run(state) do
         state = receive do
-            {:trust, p} ->
-                state = %{state | leader: p}
-                state
 
-            {:decide, v} ->
-                if state.decided == false do
-                    state = %{state | decided = true}
-                    state
-                end
-                state
+            # Get decision - retrieves a certain pid's v decision
+            {:get_decision, p} ->
+
 
             # Prepare - finds out if a process is ready
-            {:prepare, b, p} ->
+            {:prepare, b, p, instance} ->
                 # If the ballot value proposed is bigger than the current states ballot
                 # acknowledge that ballot number and change the states ballot number to the new ballot number
                 if b > state.bal do
                     state = %{state | bal: b}
-                    send(p, {:prepared, b, state.a_bal, state.a_val})
+                    send({p, instance}, {:prepared, b, state.a_bal, state.a_val})
                 else
                     # If the new ballot number is not bigger than the current states ballot, return a non-acknowledgment
-                    send(p, {:nack, b})
+                    send({p, instance}, {:nack, b})
                 end
                 state
 
             # Prepared - checks to see if a qourum of processes have acknowledged the ballot value
             {:prepared, b, a_bal, a_val} ->
-                # Check the current states prepared acknowledgments
-                state = %{state | prepared_acks: state.prepared_acks
+                # Update the amount of prepare acks
+                state = %{state | prepAcks: state.prepAcks
                  ++ [%{:b => b, :a_bal => a_bal, :a_val => a_val}]}
-                # If there is a qourum (greater than half) of acknoeldgments do the following
-                if length(state.prepared_acks) > round(length(state.participants)/2) do
+                # If there is a qourum (greater than half) of acknowledgments do the following
+                if length(state.prepAcks) > round(length(state.participants)/2) do
                     # Set the decided value from the state
                     decided_value = decide_value(state)
 
                     # Send out an accept to all state participants with the decided value and ballot number
                     for p <- state.participants do
-                        send(p, {:accept, b, decided_value})
+                        send({p, instance}, {:accept, b, decided_value})
                     end
                 end
                 state
@@ -80,24 +79,24 @@ defmodule Paxos do
                     # Change the current states ballot value, highest accept ballot value, and the accepted value
                     state = %{state | bal: b, a_bal: b, a_val: v}
                     # Respond with an accepted with ballot value
-                    send(p, {:accepted, b})
+                    send({p, instance}, {:accepted, b})
                     state
                 else
                     # Else, just reply with a non-acknowledgement
-                    send(p, {:nack, b})
+                    send({p, instance}, {:nack, b})
                     state
                 end
 
             # Accepted - checks to see if a quorum of processes have accepted
             {:accepted, b} ->
-                # Check the current states accepted acknowledgments
-                state = %{state | accepted_acks: state.accepted_acks ++ [b]}
+                # Update the amount of accept acknowledgements 
+                state = %{state | accpAcks: state.accpAcks ++ [b]}
 
                 # Check if there is a quorum (greater than half) of accepted acknowledgments and do the following
-                if length(state.accepted_acks) > round(length(state.participants)/2) do
+                if length(state.accpAcks) > round(length(state.participants)/2) do
                     # Send a decision with the accepted value from the state to all participants
                     for p <- state.participants do
-                        send(p, {:decision, state.a_val})
+                        send({p, instance}, {:decision, state.a_val})
                     end
 
                     # Set decided as true for the state
@@ -110,41 +109,41 @@ defmodule Paxos do
                 {:abort}
 
             {:abort} ->
+                IO.puts "Aborting"
 
         end
+        run(state)
     end
 
     def propose(pid, inst, value, t) do
 
         if inst.state.leader == pid && inst.state.decided == false do
-            inst.state = %{inst.state| myBallot: inst.state.myBallot + 1}
+            inst.state = %{inst.state| myBal: inst.state.myBal + 1}
 
-            start_timer(t, pid, {:timeout})
+            From Elixir Process docs
+            Process.send_after(self(), {:timeout}, t)
 
-            for p <- inst.state.participants do
-                send(p, {:prepare, inst.state.bal, pid})
+            for p <- pid.participants do
+                send({p, instance}, {:prepare, inst.state.bal, pid})
             end
 
-            if inst.v == value && decided == true do
-                {:decision, v}
+            if inst.v == value && inst.decided == true do
+                {:decision, inst.v}
             end
 
 
             {:abort}
 
-
-
         end
 
     end
 
+    def get_ballot_number(inst) do
+      Paxos.
+    end
+
     def get_decision(pid, inst, t) do
-        if inst.state.v != nil && inst.decided == true do
-            inst.state.v
-        else
-            nil
-        end
-        state
+        
     end
 
     defp decide_value(state) do     # Think this is too basic
